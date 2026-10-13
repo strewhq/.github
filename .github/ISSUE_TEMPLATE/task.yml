@@ -1,0 +1,11 @@
+name: Task
+description: A concrete piece of work (chore, refactor, ops)
+labels: ["needs-triage"]
+body:
+  - type: textarea
+    id: what
+    attributes: {label: What needs doing}
+    validations: {required: true}
+  - type: textarea
+    id: done
+    attributes: {label: Definition of done, value: "- [ ] "}
