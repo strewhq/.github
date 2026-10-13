@@ -1,0 +1,100 @@
+# Reusable workflow: called from every strewhq repo's .github/workflows/automation.yml.
+# - Adds new/reopened issues and PRs to org project #1.
+# - Links a PR to its issue from the branch name (`14-some-title` -> "Closes #14").
+# - Closes linked issues when a PR is merged into ANY branch (e.g. development).
+name: Issue automation
+
+on:
+  workflow_call:
+    secrets:
+      ADD_TO_PROJECT_PAT:
+        required: false
+
+permissions: {}
+
+jobs:
+  add-to-project:
+    name: Add to project
+    if: >-
+      (github.event_name == 'issues' && contains(fromJSON('["opened","reopened","transferred"]'), github.event.action)) ||
+      (github.event_name == 'pull_request' && contains(fromJSON('["opened","reopened"]'), github.event.action) &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check secret
+        id: secret
+        env:
+          PAT: ${{ secrets.ADD_TO_PROJECT_PAT }}
+        run: |
+          if [ -z "$PAT" ]; then
+            echo "::warning::ADD_TO_PROJECT_PAT is not set; skipping add-to-project."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.secret.outputs.present == 'true'
+        uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
+        with:
+          project-url: https://github.com/orgs/strewhq/projects/1
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
+
+  link-issue:
+    name: Link issue from branch name
+    if: >-
+      github.event_name == 'pull_request' && contains(fromJSON('["opened","reopened"]'), github.event.action) &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          [[ "$BRANCH" =~ ^([0-9]+)- ]] || { echo "Branch '$BRANCH' has no issue number; nothing to link."; exit 0; }
+          issue="${BASH_REMATCH[1]}"
+          body="$(gh pr view "$PR" --repo "$REPO" --json body --jq '.body // ""')"
+          if grep -Eiq "(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#${issue}\b" <<<"$body"; then
+            echo "PR already references #$issue."
+            exit 0
+          fi
+          printf '%s\n\nCloses #%s\n' "$body" "$issue" > body.md
+          gh pr edit "$PR" --repo "$REPO" --body-file body.md
+          echo "Linked PR #$PR to issue #$issue."
+
+  close-issues:
+    name: Close linked issues on merge
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          body="$(gh pr view "$PR" --repo "$REPO" --json body --jq '.body // ""')"
+          issues="$( { [[ "$BRANCH" =~ ^([0-9]+)- ]] && echo "${BASH_REMATCH[1]}";
+                       grep -Eio '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' <<<"$body" | grep -Eo '[0-9]+'; } | sort -un )"
+          [ -n "$issues" ] || { echo "No linked issues."; exit 0; }
+          # GitHub closes keyword-linked issues itself on merges into the default branch; give it a moment.
+          sleep 5
+          for n in $issues; do
+            state="$(gh issue view "$n" --repo "$REPO" --json state --jq .state 2>/dev/null || echo MISSING)"
+            if [ "$state" = "OPEN" ]; then
+              gh issue close "$n" --repo "$REPO" --reason completed \
+                --comment "Closed by #$PR (merged into \`$BASE\`)."
+            else
+              echo "#$n is $state; skipping."
+            fi
+          done
