@@ -1,0 +1,19 @@
+name: Feature request
+description: Propose new functionality
+labels: ["needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: Problem, description: Who is this for and what problem does it solve?}
+    validations: {required: true}
+  - type: textarea
+    id: proposal
+    attributes: {label: Proposed solution}
+  - type: textarea
+    id: acceptance
+    attributes: {label: Acceptance criteria, value: "- [ ] "}
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Tracking, Payments, Install, Agent & MCP, AI Manager, Fraud, Portal, Stripe App, Website/Marketing]
