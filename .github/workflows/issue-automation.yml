@@ -1,5 +1,5 @@
 # Reusable workflow: called from every strewhq repo's .github/workflows/automation.yml.
-# - Adds new/reopened issues and PRs to org project #1.
+# - Adds new/reopened/transferred issues (not PRs) to org project #1.
 # - Links a PR to its issue from the branch name (`14-some-title` -> "Closes #14").
 # - Closes linked issues when a PR is merged into ANY branch (e.g. development).
 name: Issue automation
@@ -15,10 +15,7 @@ permissions: {}
 jobs:
   add-to-project:
     name: Add to project
-    if: >-
-      (github.event_name == 'issues' && contains(fromJSON('["opened","reopened","transferred"]'), github.event.action)) ||
-      (github.event_name == 'pull_request' && contains(fromJSON('["opened","reopened"]'), github.event.action) &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'issues' && contains(fromJSON('["opened","reopened","transferred"]'), github.event.action)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
