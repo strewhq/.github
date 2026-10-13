@@ -1,0 +1,20 @@
+name: Bug report
+description: Something is broken
+labels: ["needs-triage"]
+body:
+  - type: textarea
+    id: what
+    attributes: {label: What happened?, description: Include what you expected instead.}
+    validations: {required: true}
+  - type: textarea
+    id: repro
+    attributes: {label: Steps to reproduce}
+    validations: {required: true}
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Tracking, Payments, Install, Agent & MCP, AI Manager, Fraud, Portal, Stripe App, Website/Marketing]
+  - type: textarea
+    id: logs
+    attributes: {label: Logs / screenshots / Sentry link, render: text}
