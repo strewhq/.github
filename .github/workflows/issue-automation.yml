@@ -1,0 +1,35 @@
+# Reusable workflow, called from each strewhq repo's .github/workflows/automation.yml.
+# When a PR is merged into ANY branch (e.g. development), closes the issues it references:
+# the branch-name prefix (`14-some-title` -> #14) and closing keywords in the PR body.
+name: Close issues on merge
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  close-issues:
+    name: Close linked issues on merge
+    if: github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          body="$(gh pr view "$PR" --json body --jq '.body // ""')"
+          issues="$( { [[ "$BRANCH" =~ ^([0-9]+)- ]] && echo "${BASH_REMATCH[1]}"
+                       grep -Eio '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' <<<"$body" | grep -Eo '[0-9]+' || true; } | sort -un )"
+          sleep 5 # let GitHub's own keyword-close (default branch) land first
+          for n in $issues; do
+            [ "$(gh issue view "$n" --json state --jq .state 2>/dev/null)" = OPEN ] || continue
+            gh issue close "$n" --reason completed --comment "Closed by #$PR (merged into \`$BASE\`)."
+          done
