@@ -75,8 +75,10 @@ jobs:
             exit 1
           fi
 
-          # Retry transient API failures.
-          gql() { local i; for i in 1 2 3 4; do if out=$(gh api graphql "$@" 2>&1); then printf '%s' "$out"; return 0; fi; echo "graphql attempt $i failed: $out" >&2; sleep $((i*3)); done; return 1; }
+          # Retry transient network failures only; GraphQL errors (e.g. NOT_FOUND) fail at once.
+          gql() { local i out; for i in 1 2 3 4; do if out=$(gh api graphql "$@" 2>&1); then printf '%s' "$out"; return 0; fi
+                  if grep -q '"errors"' <<<"$out"; then echo "graphql error: $out" >&2; return 1; fi
+                  echo "graphql attempt $i failed: $out" >&2; sleep $((i*3)); done; return 1; }
 
           case "$ACTION" in
             opened|reopened|ready_for_review)
@@ -118,6 +120,8 @@ jobs:
           if [[ "$seg" =~ ^(issue-|issues-|gh-)?([0-9]+)([-_].*)?$ ]]; then refs+=$'\n'"$REPO_FULL#${BASH_REMATCH[2]}"; fi
 
           # Closing keywords in the body (covers PRs into non-default branches like dev, which GitHub does not link).
+          # Code blocks and `inline code` are ignored, so examples in a PR description don't link anything.
+          BODY=$(perl -0pe 's/```.*?```//gs; s/`[^`\n]*`//g' <<<"$BODY")
           kw=$(grep -Eio '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]:]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' <<<"$BODY" | grep -Eo '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+$' || true)
           while read -r k; do
             [ -z "$k" ] && continue
@@ -135,14 +139,14 @@ jobs:
           while read -r ref; do
             r="${ref%#*}"; n="${ref##*#}"
             iq=$(gql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issueOrPullRequest(number:$n){__typename ... on Issue{id state projectItems(first:50){nodes{id project{id} fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}}}}' \
-                 -f o="${r%/*}" -f r="${r#*/}" -F n="$n") || { echo "::warning::$ref: lookup failed"; rc=1; continue; }
+                 -f o="${r%/*}" -f r="${r#*/}" -F n="$n") || { echo "::notice::$ref: not found or not accessible, skipped"; continue; }
             [ "$(jq -r '.data.repository.issueOrPullRequest.__typename // empty' <<<"$iq")" = Issue ] || { echo "$ref is not an issue, skipped"; continue; }
             ISSUE_ID=$(jq -r '.data.repository.issueOrPullRequest.id' <<<"$iq")
             STATE=$(jq -r '.data.repository.issueOrPullRequest.state' <<<"$iq")
             ITEM_ID=$(jq -r --arg p "$PROJECT_ID" '.data.repository.issueOrPullRequest.projectItems.nodes[] | select(.project.id==$p) | .id' <<<"$iq" | head -n1)
             CURRENT=$(jq -r --arg p "$PROJECT_ID" '.data.repository.issueOrPullRequest.projectItems.nodes[] | select(.project.id==$p) | .fieldValueByName.name // ""' <<<"$iq" | head -n1)
 
-            if [ "$MODE" != done ] && [ "$STATE" != OPEN ]; then echo "$ref is closed, left unchanged"; continue; fi
+            if [ "$STATE" != OPEN ] && { [ "$MODE" != done ] || [ -z "$ITEM_ID" ]; }; then echo "$ref is closed, left unchanged"; continue; fi
             if [ "$MODE" = abandoned ] && [ "$CURRENT" != "$REVIEW_STATUS" ]; then echo "$ref is '$CURRENT', left unchanged"; continue; fi
 
             if [ -z "$ITEM_ID" ]; then
