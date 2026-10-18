@@ -158,7 +158,8 @@ jobs:
 
             if [ "$MODE" = done ] && [ "$STATE" = OPEN ]; then
               # GitHub only auto-closes for merges into the default branch, so close it here (any base branch).
-              gql -f query='mutation($i:ID!,$b:String!){addComment(input:{subjectId:$i,body:$b}){clientMutationId}}' -f i="$ISSUE_ID" -f b="Closed by $PR_URL (merged into \`$BASE\`)." >/dev/null || true
+              # Single attempt (not retried) so a flaky network cannot post the comment twice.
+              gh api graphql -f query='mutation($i:ID!,$b:String!){addComment(input:{subjectId:$i,body:$b}){clientMutationId}}' -f i="$ISSUE_ID" -f b="Closed by $PR_URL (merged into \`$BASE\`)." >/dev/null 2>&1 || true
               if gql -f query='mutation($i:ID!){closeIssue(input:{issueId:$i,stateReason:COMPLETED}){issue{state}}}' -f i="$ISSUE_ID" >/dev/null; then
                 echo "$ref closed as completed"
               else echo "::warning::$ref: close failed"; rc=1; fi
